@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, PlusCircle, Tag, Wallet, Repeat, BarChart3, List, Settings2, X, Bell, TrendingUp } from 'lucide-react'
+import { LayoutDashboard, PlusCircle, Tag, Wallet, Repeat, BarChart3, List, Settings2, X, Bell, TrendingUp, LogOut } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
+import { useAuth } from '../../context/AuthContext'
 import { monthLabel } from '../../lib/dateUtils'
 import { getRemainingBudget } from '../../lib/calculations'
 
@@ -17,6 +18,7 @@ const BASE_NAV = [
 
 export function Sidebar({ onClose }) {
   const { expenses, budgets, activeMonth, settings, notifications } = useApp()
+  const { signOut } = useAuth()
   const activeNotifs = notifications.filter((n) => !n.dismissed).length
   const budget = budgets[activeMonth] || 0
   const remaining = getRemainingBudget(budget, expenses, activeMonth)
@@ -123,6 +125,17 @@ export function Sidebar({ onClose }) {
           Ρυθμίσεις
         </NavLink>
       </nav>
+
+      {/* Logout */}
+      <div className="px-2 pb-4">
+        <button
+          onClick={signOut}
+          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-slate-400 hover:text-white hover:bg-white/5 transition-all cursor-pointer"
+        >
+          <LogOut size={16} />
+          Αποσύνδεση
+        </button>
+      </div>
     </aside>
   )
 }

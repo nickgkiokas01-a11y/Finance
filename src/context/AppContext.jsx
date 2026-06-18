@@ -1,450 +1,326 @@
-import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
-import { load, save } from '../lib/storage'
-import { currentMonthKey, prevMonthKey } from '../lib/dateUtils'
+import { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react'
+import { supabase } from '../lib/supabase'
+import { useAuth } from './AuthContext'
 import { v4 as uuid } from '../lib/uuid'
-
-const DEFAULT_CATEGORIES = [
-  { id: 'cat-1', name: 'Φαγητό', color: '#f97316', icon: 'UtensilsCrossed' },
-  { id: 'cat-2', name: 'Μεταφορά', color: '#3b82f6', icon: 'Car' },
-  { id: 'cat-3', name: 'Λογαριασμοί', color: '#ef4444', icon: 'Receipt' },
-  { id: 'cat-4', name: 'Ψυχαγωγία', color: '#8b5cf6', icon: 'Gamepad2' },
-  { id: 'cat-5', name: 'Υγεία', color: '#10b981', icon: 'Heart' },
-  { id: 'cat-6', name: 'Άλλα', color: '#6b7280', icon: 'MoreHorizontal' },
-]
+import { currentMonthKey } from '../lib/dateUtils'
 
 const AppContext = createContext(null)
+export const useApp = () => useContext(AppContext)
+
+const DEFAULT_CATEGORIES = [
+  { id: 'food', name: 'Φαγητό', color: '#f59e0b', icon: '🍔' },
+  { id: 'transport', name: 'Μεταφορά', color: '#3b82f6', icon: '🚗' },
+  { id: 'entertainment', name: 'Ψυχαγωγία', color: '#8b5cf6', icon: '🎬' },
+  { id: 'health', name: 'Υγεία', color: '#10b981', icon: '💊' },
+  { id: 'shopping', name: 'Αγορές', color: '#ec4899', icon: '🛍️' },
+  { id: 'bills', name: 'Λογαριασμοί', color: '#64748b', icon: '📄' },
+  { id: 'other', name: 'Άλλο', color: '#94a3b8', icon: '📦' },
+]
+
+const DEFAULT_SETTINGS = {
+  currency: '€', defaultBudget: 800, activeMonth: currentMonthKey(),
+  userName: '', userIcon: '😊', budgetAlertThreshold: 80, categoryBudgets: {},
+  telegramBotToken: '', telegramChatId: '',
+}
+
+const toExpense = (r) => ({ id: r.id, name: r.name, amount: Number(r.amount), date: r.date, categoryId: r.category_id, notes: r.notes || '' })
+const toCategory = (r) => ({ id: r.id, name: r.name, color: r.color, icon: r.icon })
+const toFixed = (r) => ({ id: r.id, name: r.name, amount: Number(r.amount), dayOfMonth: r.day_of_month, active: r.active, reminderDays: r.reminder_days, lastAppliedMonth: r.last_applied_month })
+const toIncome = (r) => ({ id: r.id, name: r.name, amount: Number(r.amount), date: r.date, notes: r.notes || '' })
+const toSettings = (r) => ({
+  currency: r.currency || '€',
+  defaultBudget: Number(r.default_budget) || 800,
+  activeMonth: r.active_month || currentMonthKey(),
+  userName: r.user_name || '',
+  userIcon: r.user_icon || '😊',
+  budgetAlertThreshold: r.budget_alert_threshold || 80,
+  categoryBudgets: r.category_budgets || {},
+  telegramBotToken: r.telegram_bot_token || '',
+  telegramChatId: r.telegram_chat_id || '',
+})
 
 export function AppProvider({ children }) {
-  const [categories, setCategories] = useState(() => {
-    const stored = load('et_categories', null)
-    return stored && stored.length > 0 ? stored : DEFAULT_CATEGORIES
-  })
-  const [expenses, setExpenses] = useState(() => load('et_expenses', []))
-  const [incomes, setIncomes] = useState(() => load('et_incomes', []))
-  const [fixedExpenses, setFixedExpenses] = useState(() => load('et_fixed_expenses', []))
-  const [budgets, setBudgetsState] = useState(() => load('et_budgets', {}))
-  const [settings, setSettingsState] = useState(() => {
-    const stored = load('et_settings', {})
-    return {
-      currency: '€',
-      defaultBudget: 800,
-      activeMonth: currentMonthKey(),
-      userName: '',
-      userIcon: '😊',
-      budgetAlertThreshold: 80,
-      categoryBudgets: {},
-      telegramBotToken: '',
-      telegramChatId: '',
-      ...stored,
-      categoryBudgets: stored.categoryBudgets || {},
-    }
-  })
-  const [activeMonth, setActiveMonthState] = useState(
-    () => load('et_settings', {}).activeMonth || currentMonthKey()
-  )
-  const [notifications, setNotifications] = useState(() => {
-    const stored = load('et_notifications', [])
-    const thisMonth = currentMonthKey()
-    return stored.filter((n) => n.monthKey === thisMonth)
-  })
+  const { user } = useAuth()
+  const uid = user?.id
 
-  // Keep a ref to categories for Telegram polling (avoids stale closure)
+  const [expenses, setExpenses] = useState([])
+  const [categories, setCategories] = useState([])
+  const [budgets, setBudgetsState] = useState({})
+  const [fixedExpenses, setFixedExpenses] = useState([])
+  const [incomes, setIncomes] = useState([])
+  const [settings, setSettingsState] = useState(DEFAULT_SETTINGS)
+  const [notifications, setNotifications] = useState([])
+  const [dataLoaded, setDataLoaded] = useState(false)
+
   const categoriesRef = useRef(categories)
   useEffect(() => { categoriesRef.current = categories }, [categories])
 
-  // Show welcome modal on first use
-  const [showWelcome, setShowWelcomeState] = useState(() => !load('et_onboarded', false))
-
-  // Show new-month prompt when current month has no budget and user is already onboarded
-  const [showNewMonthPrompt, setShowNewMonthPrompt] = useState(() => {
-    const onboarded = load('et_onboarded', false)
-    const bkts = load('et_budgets', {})
-    return onboarded && !bkts[currentMonthKey()]
-  })
-
-  // Persist all state changes
-  useEffect(() => { save('et_categories', categories) }, [categories])
-  useEffect(() => { save('et_expenses', expenses) }, [expenses])
-  useEffect(() => { save('et_incomes', incomes) }, [incomes])
-  useEffect(() => { save('et_fixed_expenses', fixedExpenses) }, [fixedExpenses])
-  useEffect(() => { save('et_budgets', budgets) }, [budgets])
-  useEffect(() => { save('et_notifications', notifications) }, [notifications])
   useEffect(() => {
-    save('et_settings', { ...settings, activeMonth })
-  }, [settings, activeMonth])
-
-  // Auto-apply fixed expenses on mount
-  useEffect(() => {
-    const today = new Date()
-    const todayDay = today.getDate()
-    const thisMonth = currentMonthKey()
-
-    setFixedExpenses((prev) => {
-      const newExpenses = []
-      const updated = prev.map((fe) => {
-        if (fe.active && fe.lastAppliedMonth !== thisMonth && todayDay >= fe.dayOfMonth) {
-          const isoDate = `${thisMonth}-${String(fe.dayOfMonth).padStart(2, '0')}`
-          newExpenses.push({
-            id: uuid(),
-            name: fe.name,
-            amount: fe.amount,
-            categoryId: fe.categoryId,
-            date: isoDate,
-            isFixed: true,
-            fixedExpenseId: fe.id,
-            notes: '',
-          })
-          return { ...fe, lastAppliedMonth: thisMonth }
-        }
-        return fe
-      })
-      if (newExpenses.length > 0) {
-        setExpenses((prev) => [...prev, ...newExpenses])
+    if (!uid) return
+    setDataLoaded(false)
+    const load = async () => {
+      const [expR, catR, budR, fixR, incR, setR] = await Promise.all([
+        supabase.from('expenses').select('*').eq('user_id', uid),
+        supabase.from('categories').select('*').eq('user_id', uid),
+        supabase.from('budgets').select('*').eq('user_id', uid),
+        supabase.from('fixed_expenses').select('*').eq('user_id', uid),
+        supabase.from('incomes').select('*').eq('user_id', uid),
+        supabase.from('user_settings').select('*').eq('user_id', uid).single(),
+      ])
+      setExpenses((expR.data || []).map(toExpense))
+      if (catR.data && catR.data.length > 0) {
+        setCategories(catR.data.map(toCategory))
+      } else {
+        const rows = DEFAULT_CATEGORIES.map(c => ({ id: c.id, user_id: uid, name: c.name, color: c.color, icon: c.icon }))
+        await supabase.from('categories').insert(rows)
+        setCategories(DEFAULT_CATEGORIES)
       }
-      return updated
+      const budMap = {}
+      ;(budR.data || []).forEach(r => { budMap[r.year_month] = Number(r.amount) })
+      setBudgetsState(budMap)
+      setFixedExpenses((fixR.data || []).map(toFixed))
+      setIncomes((incR.data || []).map(toIncome))
+      if (setR.data) {
+        setSettingsState(toSettings(setR.data))
+      } else {
+        await supabase.from('user_settings').insert({ user_id: uid })
+      }
+      setDataLoaded(true)
+    }
+    load()
+  }, [uid])
+
+  const updateSettings = useCallback(async (patch) => {
+    setSettingsState(prev => {
+      const next = { ...prev, ...patch }
+      if (uid) {
+        supabase.from('user_settings').upsert({
+          user_id: uid, currency: next.currency, default_budget: next.defaultBudget,
+          active_month: next.activeMonth, user_name: next.userName, user_icon: next.userIcon,
+          budget_alert_threshold: next.budgetAlertThreshold, category_budgets: next.categoryBudgets,
+          telegram_bot_token: next.telegramBotToken, telegram_chat_id: next.telegramChatId,
+        })
+      }
+      return next
     })
+  }, [uid])
+
+  const setActiveMonth = useCallback((m) => updateSettings({ activeMonth: m }), [updateSettings])
+  const activeMonth = settings.activeMonth
+
+  const addExpense = useCallback(async (data) => {
+    const exp = { id: uuid(), ...data }
+    setExpenses(prev => [exp, ...prev])
+    await supabase.from('expenses').insert({ id: exp.id, user_id: uid, name: exp.name, amount: exp.amount, date: exp.date, category_id: exp.categoryId, notes: exp.notes })
+  }, [uid])
+
+  const updateExpense = useCallback(async (id, data) => {
+    setExpenses(prev => prev.map(e => e.id === id ? { ...e, ...data } : e))
+    await supabase.from('expenses').update({ name: data.name, amount: data.amount, date: data.date, category_id: data.categoryId, notes: data.notes }).eq('id', id)
   }, [])
 
-  // Generate in-app notifications for upcoming fixed expenses
-  useEffect(() => {
-    const today = new Date()
-    const todayDay = today.getDate()
-    const thisMonth = currentMonthKey()
+  const deleteExpense = useCallback(async (id) => {
+    setExpenses(prev => prev.filter(e => e.id !== id))
+    await supabase.from('expenses').delete().eq('id', id)
+  }, [])
 
-    setNotifications((prev) => {
+  const addCategory = useCallback(async (data) => {
+    const cat = { id: uuid(), ...data }
+    setCategories(prev => [...prev, cat])
+    await supabase.from('categories').insert({ id: cat.id, user_id: uid, name: cat.name, color: cat.color, icon: cat.icon })
+  }, [uid])
+
+  const updateCategory = useCallback(async (id, data) => {
+    setCategories(prev => prev.map(c => c.id === id ? { ...c, ...data } : c))
+    await supabase.from('categories').update({ name: data.name, color: data.color, icon: data.icon }).eq('id', id).eq('user_id', uid)
+  }, [uid])
+
+  const deleteCategory = useCallback(async (id) => {
+    setCategories(prev => prev.filter(c => c.id !== id))
+    await supabase.from('categories').delete().eq('id', id).eq('user_id', uid)
+  }, [uid])
+
+  const setBudget = useCallback(async (yearMonth, amount) => {
+    setBudgetsState(prev => ({ ...prev, [yearMonth]: amount }))
+    await supabase.from('budgets').upsert({ user_id: uid, year_month: yearMonth, amount })
+  }, [uid])
+
+  const addFixedExpense = useCallback(async (data) => {
+    const fe = { id: uuid(), ...data }
+    setFixedExpenses(prev => [...prev, fe])
+    await supabase.from('fixed_expenses').insert({ id: fe.id, user_id: uid, name: fe.name, amount: fe.amount, day_of_month: fe.dayOfMonth, active: fe.active, reminder_days: fe.reminderDays, last_applied_month: fe.lastAppliedMonth })
+  }, [uid])
+
+  const updateFixedExpense = useCallback(async (id, data) => {
+    setFixedExpenses(prev => prev.map(f => f.id === id ? { ...f, ...data } : f))
+    await supabase.from('fixed_expenses').update({ name: data.name, amount: data.amount, day_of_month: data.dayOfMonth, active: data.active, reminder_days: data.reminderDays, last_applied_month: data.lastAppliedMonth }).eq('id', id)
+  }, [])
+
+  const deleteFixedExpense = useCallback(async (id) => {
+    setFixedExpenses(prev => prev.filter(f => f.id !== id))
+    await supabase.from('fixed_expenses').delete().eq('id', id)
+  }, [])
+
+  const applyFixedExpense = useCallback(async (fe) => {
+    const exp = { id: uuid(), name: fe.name, amount: fe.amount, date: new Date().toISOString().slice(0, 10), categoryId: fe.categoryId || 'bills', notes: 'Αυτόματο σταθερό έξοδο' }
+    setExpenses(prev => [exp, ...prev])
+    await supabase.from('expenses').insert({ id: exp.id, user_id: uid, name: exp.name, amount: exp.amount, date: exp.date, category_id: exp.categoryId, notes: exp.notes })
+    const thisMonth = currentMonthKey()
+    setFixedExpenses(prev => prev.map(f => f.id === fe.id ? { ...f, lastAppliedMonth: thisMonth } : f))
+    await supabase.from('fixed_expenses').update({ last_applied_month: thisMonth }).eq('id', fe.id)
+  }, [uid])
+
+  const addIncome = useCallback(async (data) => {
+    const inc = { id: uuid(), ...data }
+    setIncomes(prev => [inc, ...prev])
+    await supabase.from('incomes').insert({ id: inc.id, user_id: uid, name: inc.name, amount: inc.amount, date: inc.date, notes: inc.notes })
+  }, [uid])
+
+  const updateIncome = useCallback(async (id, data) => {
+    setIncomes(prev => prev.map(i => i.id === id ? { ...i, ...data } : i))
+    await supabase.from('incomes').update({ name: data.name, amount: data.amount, date: data.date, notes: data.notes }).eq('id', id)
+  }, [])
+
+  const deleteIncome = useCallback(async (id) => {
+    setIncomes(prev => prev.filter(i => i.id !== id))
+    await supabase.from('incomes').delete().eq('id', id)
+  }, [])
+
+  const updateCategoryBudget = useCallback((catId, amount) => {
+    updateSettings({ categoryBudgets: { ...settings.categoryBudgets, [catId]: amount } })
+  }, [settings.categoryBudgets, updateSettings])
+
+  const dismissNotification = useCallback((id) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, dismissed: true } : n))
+  }, [])
+
+  useEffect(() => {
+    if (!dataLoaded) return
+    const today = new Date(); const todayDay = today.getDate(); const thisMonth = currentMonthKey()
+    setNotifications(prev => {
       const newNotifs = []
       for (const fe of fixedExpenses) {
         if (!fe.active || !fe.reminderDays || fe.reminderDays <= 0) continue
         if (fe.lastAppliedMonth === thisMonth) continue
         const daysUntil = fe.dayOfMonth - todayDay
         if (daysUntil < 0 || daysUntil > fe.reminderDays) continue
-        const exists = prev.some((n) => n.fixedExpenseId === fe.id && n.monthKey === thisMonth)
+        const exists = prev.some(n => n.fixedExpenseId === fe.id && n.monthKey === thisMonth)
         if (exists) continue
-        newNotifs.push({
-          id: uuid(),
-          fixedExpenseId: fe.id,
-          monthKey: thisMonth,
-          name: fe.name,
-          amount: fe.amount,
-          daysUntil,
-          dayOfMonth: fe.dayOfMonth,
-          dismissed: false,
-          createdAt: new Date().toISOString(),
-        })
+        newNotifs.push({ id: uuid(), fixedExpenseId: fe.id, monthKey: thisMonth, name: fe.name, amount: fe.amount, daysUntil, dayOfMonth: fe.dayOfMonth, dismissed: false, createdAt: new Date().toISOString() })
       }
       return newNotifs.length > 0 ? [...prev, ...newNotifs] : prev
     })
-  }, [fixedExpenses])
+  }, [fixedExpenses, dataLoaded])
 
-  // Budget threshold alerts (total + per category)
   useEffect(() => {
+    if (!dataLoaded) return
     const thisMonth = currentMonthKey()
     const threshold = settings.budgetAlertThreshold || 80
     const totalBudget = budgets[thisMonth] || 0
-
-    setNotifications((prev) => {
+    setNotifications(prev => {
       const newNotifs = []
       const cats = categoriesRef.current || []
-
-      // Total budget alert
       if (totalBudget > 0) {
-        const totalSpent = expenses
-          .filter((e) => e.date.startsWith(thisMonth))
-          .reduce((sum, e) => sum + e.amount, 0)
+        const totalSpent = expenses.filter(e => e.date.startsWith(thisMonth)).reduce((s, e) => s + e.amount, 0)
         const pct = (totalSpent / totalBudget) * 100
         if (pct >= threshold) {
           const key = `budget-alert-${thisMonth}-${Math.floor(pct / threshold)}`
-          if (!prev.some((n) => n.key === key)) {
-            newNotifs.push({
-              id: uuid(),
-              key,
-              type: 'budget_alert',
-              monthKey: thisMonth,
-              name: 'Συνολικός Προϋπολογισμός',
-              pct: Math.round(pct),
-              threshold,
-              dismissed: false,
-              createdAt: new Date().toISOString(),
-            })
+          if (!prev.some(n => n.key === key)) {
+            newNotifs.push({ id: uuid(), key, type: 'budget_alert', monthKey: thisMonth, name: 'Συνολικός Προϋπολογισμός', pct: Math.round(pct), threshold, dismissed: false, createdAt: new Date().toISOString() })
           }
         }
       }
-
-      // Category budget alerts
       for (const [catId, catBudget] of Object.entries(settings.categoryBudgets || {})) {
         if (!catBudget || catBudget <= 0) continue
-        const catSpent = expenses
-          .filter((e) => e.date.startsWith(thisMonth) && e.categoryId === catId)
-          .reduce((sum, e) => sum + e.amount, 0)
+        const catSpent = expenses.filter(e => e.date.startsWith(thisMonth) && e.categoryId === catId).reduce((s, e) => s + e.amount, 0)
         const pct = (catSpent / catBudget) * 100
         if (pct >= threshold) {
           const key = `cat-alert-${catId}-${thisMonth}-${Math.floor(pct / threshold)}`
-          if (!prev.some((n) => n.key === key)) {
-            const cat = cats.find((c) => c.id === catId)
-            newNotifs.push({
-              id: uuid(),
-              key,
-              type: 'category_budget_alert',
-              monthKey: thisMonth,
-              name: cat?.name || 'Κατηγορία',
-              pct: Math.round(pct),
-              threshold,
-              dismissed: false,
-              createdAt: new Date().toISOString(),
-            })
+          if (!prev.some(n => n.key === key)) {
+            const cat = cats.find(c => c.id === catId)
+            newNotifs.push({ id: uuid(), key, type: 'category_budget_alert', monthKey: thisMonth, name: cat?.name || 'Κατηγορία', pct: Math.round(pct), threshold, dismissed: false, createdAt: new Date().toISOString() })
           }
         }
       }
-
       return newNotifs.length > 0 ? [...prev, ...newNotifs] : prev
     })
-  }, [expenses, budgets, settings.budgetAlertThreshold, settings.categoryBudgets])
+  }, [expenses, budgets, settings.budgetAlertThreshold, settings.categoryBudgets, dataLoaded])
 
-  // Telegram bot polling
+  const tgOffsetRef = useRef(0)
   useEffect(() => {
-    const { telegramBotToken, telegramChatId } = settings
-    if (!telegramBotToken || !telegramChatId) return
-
+    if (!settings.telegramBotToken || !settings.telegramChatId) return
+    const token = settings.telegramBotToken; const chatId = settings.telegramChatId
     const poll = async () => {
       try {
-        const offset = load('et_tg_offset', 0)
-        const res = await fetch(
-          `https://api.telegram.org/bot${telegramBotToken}/getUpdates?offset=${offset}&limit=10`
-        )
-        if (!res.ok) return
+        const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=${tgOffsetRef.current}&timeout=5`)
         const data = await res.json()
-        if (!data.ok || !data.result.length) return
-
-        let maxId = offset
-        const cats = categoriesRef.current || []
-
-        for (const update of data.result) {
-          if (update.update_id >= maxId) maxId = update.update_id + 1
-          const msg = update.message
-          if (!msg?.text) continue
-          if (String(msg.chat.id) !== String(telegramChatId)) continue
-
-          const m = msg.text.trim().match(
-            /^(?:πρόσθεσε|βάλε|add|έβαλα)\s+(\d+[.,]\d+|\d+)\s*(?:ευρώ|euro|€)?\s*(.*)$/i
-          )
-          if (!m) continue
-
-          const amount = parseFloat(m[1].replace(',', '.'))
-          const description = m[2].trim() || 'Telegram έξοδο'
-          if (!amount || amount <= 0) continue
-
-          const lowerDesc = description.toLowerCase()
-          const matchedCat = cats.find((c) => lowerDesc.includes(c.name.toLowerCase()))
-          const defaultCat = cats.find((c) => c.name === 'Άλλα') || cats[0]
-          const catId = (matchedCat || defaultCat)?.id || ''
-
-          const today = new Date().toISOString().slice(0, 10)
-          setExpenses((prev) => [
-            ...prev,
-            { id: uuid(), name: description, amount, categoryId: catId, date: today, notes: 'Telegram', isFixed: false, fixedExpenseId: null },
-          ])
+        if (!data.ok) return
+        for (const update of data.result || []) {
+          tgOffsetRef.current = update.update_id + 1
+          const text = update.message?.text || ''
+          const fromId = String(update.message?.chat?.id || '')
+          if (fromId !== chatId) continue
+          const m = text.match(/πρόσθεσε\s+([\d.,]+)\s+ευρώ?\s+(.+)/i)
+          if (m) {
+            const amount = parseFloat(m[1].replace(',', '.'))
+            const name = m[2].trim()
+            if (!isNaN(amount) && amount > 0) {
+              await addExpense({ name, amount, date: new Date().toISOString().slice(0, 10), categoryId: categoriesRef.current[0]?.id || 'other', notes: 'Από Telegram' })
+            }
+          }
         }
-
-        if (maxId > offset) save('et_tg_offset', maxId)
-      } catch {
-        // Network/CORS errors - silently ignore
-      }
+      } catch { /* ignore */ }
     }
-
+    const iv = setInterval(poll, 60000)
     poll()
-    const interval = setInterval(poll, 60000)
-    return () => clearInterval(interval)
-  }, [settings.telegramBotToken, settings.telegramChatId])
+    return () => clearInterval(iv)
+  }, [settings.telegramBotToken, settings.telegramChatId, addExpense])
 
-  const completeWelcome = useCallback((budgetAmount, currency) => {
-    const month = currentMonthKey()
-    setBudgetsState((prev) => ({ ...prev, [month]: budgetAmount }))
-    setSettingsState((prev) => ({ ...prev, currency, defaultBudget: budgetAmount }))
-    save('et_onboarded', true)
-    setShowWelcomeState(false)
-    setShowNewMonthPrompt(false)
-  }, [])
+  const resetAllData = useCallback(async () => {
+    if (!uid) return
+    await Promise.all([
+      supabase.from('expenses').delete().eq('user_id', uid),
+      supabase.from('incomes').delete().eq('user_id', uid),
+      supabase.from('budgets').delete().eq('user_id', uid),
+      supabase.from('fixed_expenses').delete().eq('user_id', uid),
+      supabase.from('user_settings').delete().eq('user_id', uid),
+    ])
+    setExpenses([]); setIncomes([]); setBudgetsState({}); setFixedExpenses([])
+    setSettingsState(DEFAULT_SETTINGS); setNotifications([])
+  }, [uid])
 
-  const dismissNewMonthPrompt = useCallback(() => {
-    setShowNewMonthPrompt(false)
-  }, [])
+  const exportData = useCallback(() => JSON.stringify({ expenses, categories, budgets, fixedExpenses, incomes, settings }, null, 2), [expenses, categories, budgets, fixedExpenses, incomes, settings])
 
-  // Expenses CRUD
-  const addExpense = useCallback((data) => {
-    setExpenses((prev) => [...prev, { id: uuid(), isFixed: false, fixedExpenseId: null, notes: '', ...data }])
-  }, [])
-
-  const updateExpense = useCallback((id, data) => {
-    setExpenses((prev) => prev.map((e) => (e.id === id ? { ...e, ...data } : e)))
-  }, [])
-
-  const deleteExpense = useCallback((id) => {
-    setExpenses((prev) => prev.filter((e) => e.id !== id))
-  }, [])
-
-  // Categories CRUD
-  const addCategory = useCallback((data) => {
-    setCategories((prev) => [...prev, { id: uuid(), ...data }])
-  }, [])
-
-  const updateCategory = useCallback((id, data) => {
-    setCategories((prev) => prev.map((c) => (c.id === id ? { ...c, ...data } : c)))
-  }, [])
-
-  const deleteCategory = useCallback((id, reassignId = null) => {
-    if (reassignId) {
-      setExpenses((prev) =>
-        prev.map((e) => (e.categoryId === id ? { ...e, categoryId: reassignId } : e))
-      )
-    }
-    setCategories((prev) => prev.filter((c) => c.id !== id))
-  }, [])
-
-  // Fixed Expenses CRUD
-  const addFixed = useCallback((data) => {
-    setFixedExpenses((prev) => [...prev, { id: uuid(), active: true, lastAppliedMonth: null, ...data }])
-  }, [])
-
-  const updateFixed = useCallback((id, data) => {
-    setFixedExpenses((prev) => prev.map((f) => (f.id === id ? { ...f, ...data } : f)))
-  }, [])
-
-  const deleteFixed = useCallback((id) => {
-    setFixedExpenses((prev) => prev.filter((f) => f.id !== id))
-  }, [])
-
-  const applyFixed = useCallback((id) => {
-    setFixedExpenses((prev) => {
-      const fe = prev.find((f) => f.id === id)
-      if (!fe) return prev
-      const thisMonth = currentMonthKey()
-      const isoDate = `${thisMonth}-${String(fe.dayOfMonth).padStart(2, '0')}`
-      setExpenses((ep) => [
-        ...ep,
-        {
-          id: uuid(),
-          name: fe.name,
-          amount: fe.amount,
-          categoryId: fe.categoryId,
-          date: isoDate,
-          isFixed: true,
-          fixedExpenseId: fe.id,
-          notes: '',
-        },
-      ])
-      return prev.map((f) => (f.id === id ? { ...f, lastAppliedMonth: thisMonth } : f))
-    })
-  }, [])
-
-  // Budget — also dismisses the new-month prompt when set
-  const setBudget = useCallback((yearMonth, amount) => {
-    setBudgetsState((prev) => ({ ...prev, [yearMonth]: amount }))
-    if (yearMonth === currentMonthKey()) setShowNewMonthPrompt(false)
-  }, [])
-
-  // Settings
-  const updateSettings = useCallback((data) => {
-    setSettingsState((prev) => ({ ...prev, ...data }))
-  }, [])
-
-  // Income CRUD
-  const addIncome = useCallback((data) => {
-    setIncomes((prev) => [...prev, { id: uuid(), notes: '', ...data }])
-  }, [])
-  const updateIncome = useCallback((id, data) => {
-    setIncomes((prev) => prev.map((i) => (i.id === id ? { ...i, ...data } : i)))
-  }, [])
-  const deleteIncome = useCallback((id) => {
-    setIncomes((prev) => prev.filter((i) => i.id !== id))
-  }, [])
-
-  // Category budget
-  const updateCategoryBudget = useCallback((catId, amount) => {
-    setSettingsState((prev) => ({
-      ...prev,
-      categoryBudgets: { ...prev.categoryBudgets, [catId]: amount },
-    }))
-  }, [])
-
-  // Notifications
-  const dismissNotification = useCallback((id) => {
-    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, dismissed: true } : n)))
-  }, [])
-
-  // Full data reset
-  const resetAllData = useCallback(() => {
-    setExpenses([])
-    setIncomes([])
-    setCategories(DEFAULT_CATEGORIES)
-    setFixedExpenses([])
-    setBudgetsState({})
-    setNotifications([])
-    setSettingsState({ currency: '€', defaultBudget: 800, activeMonth: currentMonthKey(), budgetAlertThreshold: 80, categoryBudgets: {} })
-    setActiveMonthState(currentMonthKey())
-    save('et_onboarded', false)
-    save('et_tg_offset', 0)
-    setShowWelcomeState(true)
-    setShowNewMonthPrompt(false)
-  }, [])
-
-  // Full data import (from JSON backup)
-  const importData = useCallback((data) => {
-    if (data.expenses) setExpenses(data.expenses)
-    if (data.incomes) setIncomes(data.incomes)
-    if (data.categories) setCategories(data.categories)
-    if (data.fixedExpenses) setFixedExpenses(data.fixedExpenses)
-    if (data.budgets) setBudgetsState(data.budgets)
-    if (data.settings) setSettingsState(data.settings)
-  }, [])
-
-  const setActiveMonth = useCallback((month) => {
-    setActiveMonthState(month)
-  }, [])
+  const importData = useCallback(async (json) => {
+    try {
+      const d = JSON.parse(json)
+      if (d.expenses) {
+        setExpenses(d.expenses)
+        await supabase.from('expenses').delete().eq('user_id', uid)
+        await supabase.from('expenses').insert(d.expenses.map(e => ({ id: e.id, user_id: uid, name: e.name, amount: e.amount, date: e.date, category_id: e.categoryId, notes: e.notes })))
+      }
+      if (d.incomes) {
+        setIncomes(d.incomes)
+        await supabase.from('incomes').delete().eq('user_id', uid)
+        await supabase.from('incomes').insert(d.incomes.map(i => ({ id: i.id, user_id: uid, name: i.name, amount: i.amount, date: i.date, notes: i.notes })))
+      }
+    } catch { /* ignore */ }
+  }, [uid])
 
   return (
-    <AppContext.Provider
-      value={{
-        expenses,
-        addExpense,
-        updateExpense,
-        deleteExpense,
-        categories,
-        addCategory,
-        updateCategory,
-        deleteCategory,
-        fixedExpenses,
-        addFixed,
-        updateFixed,
-        deleteFixed,
-        applyFixed,
-        budgets,
-        setBudget,
-        settings,
-        updateSettings,
-        activeMonth,
-        setActiveMonth,
-        incomes,
-        addIncome,
-        updateIncome,
-        deleteIncome,
-        updateCategoryBudget,
-        notifications,
-        dismissNotification,
-        showWelcome,
-        completeWelcome,
-        showNewMonthPrompt,
-        dismissNewMonthPrompt,
-        resetAllData,
-        importData,
-      }}
-    >
+    <AppContext.Provider value={{
+      expenses, categories, budgets, fixedExpenses, incomes, settings, notifications, activeMonth, dataLoaded,
+      addExpense, updateExpense, deleteExpense,
+      addCategory, updateCategory, deleteCategory,
+      setBudget,
+      addFixedExpense, updateFixedExpense, deleteFixedExpense, applyFixedExpense,
+      addIncome, updateIncome, deleteIncome,
+      updateSettings, setActiveMonth,
+      updateCategoryBudget,
+      dismissNotification,
+      resetAllData, exportData, importData,
+    }}>
       {children}
     </AppContext.Provider>
   )
-}
-
-export const useApp = () => {
-  const ctx = useContext(AppContext)
-  if (!ctx) throw new Error('useApp must be used inside AppProvider')
-  return ctx
 }
