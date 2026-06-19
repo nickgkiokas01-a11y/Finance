@@ -2,10 +2,10 @@ import { NavLink } from 'react-router-dom'
 import { LayoutDashboard, PlusCircle, Tag, Wallet, Repeat, BarChart3, List, Settings2, X, Bell, TrendingUp, LogOut, Shield } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
-
-const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL
 import { monthLabel } from '../../lib/dateUtils'
 import { getRemainingBudget } from '../../lib/calculations'
+
+const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL
 
 const BASE_NAV = [
   { to: '/', icon: LayoutDashboard, label: 'Αρχική' },
@@ -29,7 +29,7 @@ export function Sidebar({ onClose }) {
   const barColor = pct > 50 ? '#34d399' : pct > 20 ? '#fbbf24' : '#f87171'
 
   return (
-    <aside className="w-56 shrink-0 bg-slate-900 flex flex-col min-h-screen">
+    <aside className="w-56 shrink-0 bg-slate-900 flex flex-col h-screen overflow-y-auto">
       {/* Header */}
       <div className="px-4 py-5 border-b border-slate-800">
         <div className="flex items-center justify-between">
