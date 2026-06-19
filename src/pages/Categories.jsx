@@ -45,10 +45,12 @@ export function Categories() {
         {categories.map((cat) => (
           <Card key={cat.id}>
             <CardBody className="py-4">
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: cat.color }} />
-                  <span className="text-sm font-semibold text-slate-700">{cat.name}</span>
+              <div className="flex items-start justify-between mb-2">
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center text-xl"
+                  style={{ backgroundColor: `${cat.color}20` }}
+                >
+                  {cat.icon || '📦'}
                 </div>
                 <div className="flex gap-1">
                   <button
@@ -65,7 +67,8 @@ export function Categories() {
                   </button>
                 </div>
               </div>
-              <p className="text-lg font-bold mt-2" style={{ color: cat.color }}>
+              <span className="text-sm font-semibold text-slate-700">{cat.name}</span>
+              <p className="text-lg font-bold mt-1" style={{ color: cat.color }}>
                 {settings.currency}{(spendMap[cat.id] || 0).toFixed(2)}
               </p>
               <p className="text-xs text-slate-400">αυτό το μήνα</p>

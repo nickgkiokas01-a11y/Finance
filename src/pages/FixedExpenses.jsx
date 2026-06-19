@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { Repeat, Plus, Pencil, Trash2, Check, Play, Bell } from 'lucide-react'
-import { Card, CardBody, CardHeader } from '../components/ui/Card'
+import { Repeat, Plus, Pencil, Trash2, Check, Play, Bell, Send } from 'lucide-react'
+import { Card, CardBody } from '../components/ui/Card'
 import { Modal } from '../components/ui/Modal'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
@@ -10,7 +10,8 @@ import { useApp } from '../context/AppContext'
 import { currentMonthKey } from '../lib/dateUtils'
 
 function FixedForm({ initial = {}, onSubmit, onCancel }) {
-  const { categories } = useApp()
+  const { categories, settings } = useApp()
+  const hasTelegram = !!(settings.telegramBotToken && settings.telegramChatId)
   const [form, setForm] = useState({
     name: initial.name || '',
     amount: initial.amount || '',
@@ -18,6 +19,7 @@ function FixedForm({ initial = {}, onSubmit, onCancel }) {
     dayOfMonth: initial.dayOfMonth || 1,
     active: initial.active !== undefined ? initial.active : true,
     reminderDays: initial.reminderDays !== undefined ? initial.reminderDays : 3,
+    telegramReminder: initial.telegramReminder || false,
   })
   const [errors, setErrors] = useState({})
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
@@ -46,25 +48,45 @@ function FixedForm({ initial = {}, onSubmit, onCancel }) {
         </div>
       </div>
       <Select label="Κατηγορία" value={form.categoryId} onChange={(e) => set('categoryId', e.target.value)}>
-        {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        {categories.map((c) => <option key={c.id} value={c.id}>{c.icon ? `${c.icon} ` : ''}{c.name}</option>)}
       </Select>
+
       <div>
-        <label className="text-sm font-medium text-slate-700 block mb-1 flex items-center gap-1">
-          <Bell size={12} className="text-amber-500" /> Ειδοποίηση πριν
+        <label className="text-sm font-medium text-slate-700 block mb-1.5 flex items-center gap-1">
+          <Bell size={12} className="text-amber-500" /> Υπενθύμιση
         </label>
         <select
           value={form.reminderDays}
           onChange={(e) => set('reminderDays', Number(e.target.value))}
           className="border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white w-full"
         >
-          <option value={0}>Χωρίς ειδοποίηση</option>
+          <option value={0}>Χωρίς υπενθύμιση</option>
           <option value={1}>1 μέρα πριν</option>
-          <option value={2}>2 μέρες πριν</option>
           <option value={3}>3 μέρες πριν</option>
-          <option value={5}>5 μέρες πριν</option>
           <option value={7}>7 μέρες πριν</option>
         </select>
       </div>
+
+      {form.reminderDays > 0 && (
+        <label className={`flex items-center gap-2 text-sm cursor-pointer px-3 py-2.5 rounded-xl border transition-colors ${
+          hasTelegram
+            ? 'text-slate-700 border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50'
+            : 'text-slate-400 border-slate-100 bg-slate-50 cursor-not-allowed'
+        }`}>
+          <input
+            type="checkbox"
+            disabled={!hasTelegram}
+            checked={form.telegramReminder && hasTelegram}
+            onChange={(e) => set('telegramReminder', e.target.checked)}
+            className="rounded"
+          />
+          <Send size={13} className={hasTelegram ? 'text-indigo-500' : 'text-slate-300'} />
+          {hasTelegram
+            ? 'Αποστολή και στο Telegram'
+            : 'Telegram (ρύθμισε bot στις Ρυθμίσεις)'}
+        </label>
+      )}
+
       <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
         <input type="checkbox" checked={form.active} onChange={(e) => set('active', e.target.checked)} className="rounded" />
         Ενεργό
@@ -78,7 +100,7 @@ function FixedForm({ initial = {}, onSubmit, onCancel }) {
 }
 
 export function FixedExpenses() {
-  const { fixedExpenses, expenses, addFixed, updateFixed, deleteFixed, applyFixed, settings } = useApp()
+  const { fixedExpenses, expenses, addFixedExpense, updateFixedExpense, deleteFixedExpense, applyFixedExpense, settings } = useApp()
   const [showAdd, setShowAdd] = useState(false)
   const [editing, setEditing] = useState(null)
   const thisMonth = currentMonthKey()
@@ -87,10 +109,10 @@ export function FixedExpenses() {
     fe.lastAppliedMonth === thisMonth ||
     expenses.some((e) => e.fixedExpenseId === fe.id && e.date.startsWith(thisMonth))
 
-  const handleAdd = (data) => { addFixed(data); setShowAdd(false) }
-  const handleEdit = (data) => { updateFixed(editing.id, data); setEditing(null) }
+  const handleAdd = (data) => { addFixedExpense(data); setShowAdd(false) }
+  const handleEdit = (data) => { updateFixedExpense(editing.id, data); setEditing(null) }
   const handleDelete = (fe) => {
-    if (confirm(`Διαγραφή "${fe.name}";`)) deleteFixed(fe.id)
+    if (confirm(`Διαγραφή "${fe.name}";`)) deleteFixedExpense(fe.id)
   }
 
   return (
@@ -145,6 +167,11 @@ export function FixedExpenses() {
                             <Bell size={10} /> {fe.reminderDays}μ πριν
                           </span>
                         )}
+                        {fe.telegramReminder && (
+                          <span className="text-xs text-indigo-500 flex items-center gap-0.5">
+                            <Send size={10} /> Telegram
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -153,7 +180,7 @@ export function FixedExpenses() {
                       </span>
                       {!applied && fe.active && (
                         <button
-                          onClick={() => applyFixed(fe.id)}
+                          onClick={() => applyFixedExpense(fe)}
                           className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded cursor-pointer"
                           title="Εφαρμογή τώρα"
                         >

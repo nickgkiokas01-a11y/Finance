@@ -6,9 +6,10 @@ export function CategoryBadge({ categoryId }) {
   if (!cat) return null
   return (
     <span
-      className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium"
       style={{ backgroundColor: `${cat.color}20`, color: cat.color }}
     >
+      {cat.icon && <span>{cat.icon}</span>}
       {cat.name}
     </span>
   )

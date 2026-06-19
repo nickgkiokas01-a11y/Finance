@@ -25,7 +25,7 @@ const DEFAULT_SETTINGS = {
 
 const toExpense = (r) => ({ id: r.id, name: r.name, amount: Number(r.amount), date: r.date, categoryId: r.category_id, notes: r.notes || '' })
 const toCategory = (r) => ({ id: r.id, name: r.name, color: r.color, icon: r.icon })
-const toFixed = (r) => ({ id: r.id, name: r.name, amount: Number(r.amount), dayOfMonth: r.day_of_month, active: r.active, reminderDays: r.reminder_days, lastAppliedMonth: r.last_applied_month })
+const toFixed = (r) => ({ id: r.id, name: r.name, amount: Number(r.amount), dayOfMonth: r.day_of_month, active: r.active, reminderDays: r.reminder_days, lastAppliedMonth: r.last_applied_month, telegramReminder: r.telegram_reminder || false })
 const toIncome = (r) => ({ id: r.id, name: r.name, amount: Number(r.amount), date: r.date, notes: r.notes || '' })
 const toSettings = (r) => ({
   currency: r.currency || '€',
@@ -148,12 +148,12 @@ export function AppProvider({ children }) {
   const addFixedExpense = useCallback(async (data) => {
     const fe = { id: uuid(), ...data }
     setFixedExpenses(prev => [...prev, fe])
-    await supabase.from('fixed_expenses').insert({ id: fe.id, user_id: uid, name: fe.name, amount: fe.amount, day_of_month: fe.dayOfMonth, active: fe.active, reminder_days: fe.reminderDays, last_applied_month: fe.lastAppliedMonth })
+    await supabase.from('fixed_expenses').insert({ id: fe.id, user_id: uid, name: fe.name, amount: fe.amount, day_of_month: fe.dayOfMonth, active: fe.active, reminder_days: fe.reminderDays, last_applied_month: fe.lastAppliedMonth, telegram_reminder: fe.telegramReminder })
   }, [uid])
 
   const updateFixedExpense = useCallback(async (id, data) => {
     setFixedExpenses(prev => prev.map(f => f.id === id ? { ...f, ...data } : f))
-    await supabase.from('fixed_expenses').update({ name: data.name, amount: data.amount, day_of_month: data.dayOfMonth, active: data.active, reminder_days: data.reminderDays, last_applied_month: data.lastAppliedMonth }).eq('id', id)
+    await supabase.from('fixed_expenses').update({ name: data.name, amount: data.amount, day_of_month: data.dayOfMonth, active: data.active, reminder_days: data.reminderDays, last_applied_month: data.lastAppliedMonth, telegram_reminder: data.telegramReminder }).eq('id', id)
   }, [])
 
   const deleteFixedExpense = useCallback(async (id) => {
@@ -245,6 +245,31 @@ export function AppProvider({ children }) {
       return newNotifs.length > 0 ? [...prev, ...newNotifs] : prev
     })
   }, [expenses, budgets, settings.budgetAlertThreshold, settings.categoryBudgets, dataLoaded])
+
+  useEffect(() => {
+    if (!dataLoaded || !settings.telegramBotToken || !settings.telegramChatId) return
+    const thisMonth = currentMonthKey()
+    const storageKey = `tg_sent_${thisMonth}`
+    const sent = new Set(JSON.parse(localStorage.getItem(storageKey) || '[]'))
+    let changed = false
+    for (const n of notifications) {
+      if (!n.fixedExpenseId || n.dismissed) continue
+      const key = `${n.fixedExpenseId}`
+      if (sent.has(key)) continue
+      const fe = fixedExpenses.find(f => f.id === n.fixedExpenseId)
+      if (!fe?.telegramReminder) continue
+      sent.add(key)
+      changed = true
+      const daysText = n.daysUntil === 0 ? 'σήμερα' : n.daysUntil === 1 ? 'αύριο' : `σε ${n.daysUntil} μέρες`
+      const text = `⏰ Υπενθύμιση πληρωμής\n\n📌 ${n.name}\n💰 ${settings.currency}${n.amount}\n📅 Πληρωτέο ${daysText} (ημέρα ${n.dayOfMonth})`
+      fetch(`https://api.telegram.org/bot${settings.telegramBotToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: settings.telegramChatId, text }),
+      }).catch(() => {})
+    }
+    if (changed) localStorage.setItem(storageKey, JSON.stringify([...sent]))
+  }, [notifications, fixedExpenses, settings.telegramBotToken, settings.telegramChatId, settings.currency, dataLoaded])
 
   const tgOffsetRef = useRef(0)
   useEffect(() => {
