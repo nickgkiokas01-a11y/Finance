@@ -38,7 +38,7 @@ export function AuthPage() {
           <div className="w-16 h-16 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-indigo-500/30">
             <Wallet size={32} className="text-white" />
           </div>
-          <h1 className="text-2xl font-extrabold text-slate-800">ΕξοδοΜέτρης</h1>
+          <h1 className="text-2xl font-extrabold text-slate-800">Monflow</h1>
           <p className="text-sm text-slate-500 mt-1">Παρακολούθηση εξόδων</p>
         </div>
 

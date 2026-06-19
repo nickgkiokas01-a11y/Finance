@@ -46,7 +46,7 @@ export function Sidebar({ onClose }) {
                 <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center shrink-0">
                   <Wallet size={16} className="text-white" />
                 </div>
-                <span className="font-bold text-white text-sm">ΕξοδοΜέτρης</span>
+                <span className="font-bold text-white text-sm">Monflow</span>
               </>
             )}
           </div>
