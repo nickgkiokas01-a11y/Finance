@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Settings2, Download, Upload, Trash2, Check, UserCircle, Send } from 'lucide-react'
 import { Card, CardBody, CardHeader } from '../components/ui/Card'
 import { Input } from '../components/ui/Input'
@@ -17,7 +17,7 @@ const EMOJI_OPTIONS = ['😊','😎','🦁','🐻','🦊','🐺','🦋','🚀','
 
 export function Settings() {
   const {
-    expenses, categories, fixedExpenses, budgets, settings,
+    expenses, categories, fixedExpenses, budgets, settings, dataLoaded,
     updateSettings, importData, resetAllData,
   } = useApp()
 
@@ -33,6 +33,16 @@ export function Settings() {
   const [telegramChatId, setTelegramChatId] = useState(settings.telegramChatId || '')
   const [savedTelegram, setSavedTelegram] = useState(false)
   const [telegramStatus, setTelegramStatus] = useState(null)
+
+  useEffect(() => {
+    if (!dataLoaded) return
+    setUserName(settings.userName || '')
+    setUserIcon(settings.userIcon || '😊')
+    setCurrency(settings.currency || '€')
+    setDefaultBudget((settings.defaultBudget || 800).toString())
+    setTelegramBotToken(settings.telegramBotToken || '')
+    setTelegramChatId(settings.telegramChatId || '')
+  }, [dataLoaded])
 
   const [importError, setImportError] = useState('')
   const [importSuccess, setImportSuccess] = useState(false)
