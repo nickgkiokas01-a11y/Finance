@@ -1,7 +1,9 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, PlusCircle, Tag, Wallet, Repeat, BarChart3, List, Settings2, X, Bell, TrendingUp, LogOut } from 'lucide-react'
+import { LayoutDashboard, PlusCircle, Tag, Wallet, Repeat, BarChart3, List, Settings2, X, Bell, TrendingUp, LogOut, Shield } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import { useAuth } from '../../context/AuthContext'
+
+const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL
 import { monthLabel } from '../../lib/dateUtils'
 import { getRemainingBudget } from '../../lib/calculations'
 
@@ -18,7 +20,8 @@ const BASE_NAV = [
 
 export function Sidebar({ onClose }) {
   const { expenses, budgets, activeMonth, settings, notifications } = useApp()
-  const { signOut } = useAuth()
+  const { signOut, user } = useAuth()
+  const isAdmin = user?.email === ADMIN_EMAIL
   const activeNotifs = notifications.filter((n) => !n.dismissed).length
   const budget = budgets[activeMonth] || 0
   const remaining = getRemainingBudget(budget, expenses, activeMonth)
@@ -124,6 +127,23 @@ export function Sidebar({ onClose }) {
           <Settings2 size={16} />
           Ρυθμίσεις
         </NavLink>
+
+        {isAdmin && (
+          <NavLink
+            to="/admin"
+            onClick={onClose}
+            className={({ isActive }) =>
+              `flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-150 ${
+                isActive
+                  ? 'bg-gradient-to-r from-violet-600/80 to-purple-600/60 text-white font-medium shadow-lg shadow-violet-500/20 border-l-2 border-violet-400'
+                  : 'text-violet-400 hover:text-violet-200 hover:bg-violet-500/10'
+              }`
+            }
+          >
+            <Shield size={16} />
+            Admin
+          </NavLink>
+        )}
       </nav>
 
       {/* Logout */}

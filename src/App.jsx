@@ -13,6 +13,7 @@ import { Settings } from './pages/Settings'
 import { Notifications } from './pages/Notifications'
 import { Income } from './pages/Income'
 import { AuthPage } from './pages/AuthPage'
+import { AdminPanel } from './pages/AdminPanel'
 
 function ProtectedApp() {
   const { user, loading } = useAuth()
@@ -41,6 +42,7 @@ function ProtectedApp() {
           <Route path="report" element={<MonthlyReport />} />
           <Route path="notifications" element={<Notifications />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="admin" element={<AdminPanel />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
