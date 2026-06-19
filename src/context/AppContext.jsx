@@ -55,6 +55,9 @@ export function AppProvider({ children }) {
   const categoriesRef = useRef(categories)
   useEffect(() => { categoriesRef.current = categories }, [categories])
 
+  const settingsRef = useRef(DEFAULT_SETTINGS)
+  useEffect(() => { settingsRef.current = settings }, [settings])
+
   useEffect(() => {
     if (!uid) return
     setDataLoaded(false)
@@ -91,18 +94,16 @@ export function AppProvider({ children }) {
   }, [uid])
 
   const updateSettings = useCallback(async (patch) => {
-    setSettingsState(prev => {
-      const next = { ...prev, ...patch }
-      if (uid) {
-        supabase.from('user_settings').upsert({
-          user_id: uid, currency: next.currency, default_budget: next.defaultBudget,
-          active_month: next.activeMonth, user_name: next.userName, user_icon: next.userIcon,
-          budget_alert_threshold: next.budgetAlertThreshold, category_budgets: next.categoryBudgets,
-          telegram_bot_token: next.telegramBotToken, telegram_chat_id: next.telegramChatId,
-        })
-      }
-      return next
-    })
+    const next = { ...settingsRef.current, ...patch }
+    setSettingsState(next)
+    if (uid) {
+      await supabase.from('user_settings').upsert({
+        user_id: uid, currency: next.currency, default_budget: next.defaultBudget,
+        active_month: next.activeMonth, user_name: next.userName, user_icon: next.userIcon,
+        budget_alert_threshold: next.budgetAlertThreshold, category_budgets: next.categoryBudgets,
+        telegram_bot_token: next.telegramBotToken, telegram_chat_id: next.telegramChatId,
+      }, { onConflict: 'user_id' })
+    }
   }, [uid])
 
   const setActiveMonth = useCallback((m) => updateSettings({ activeMonth: m }), [updateSettings])
