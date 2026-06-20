@@ -58,6 +58,15 @@ export function AppProvider({ children }) {
   const settingsRef = useRef(DEFAULT_SETTINGS)
   useEffect(() => { settingsRef.current = settings }, [settings])
 
+  const expensesRef = useRef([])
+  useEffect(() => { expensesRef.current = expenses }, [expenses])
+
+  const budgetsRef = useRef({})
+  useEffect(() => { budgetsRef.current = budgets }, [budgets])
+
+  const activeMonthRef = useRef(currentMonthKey())
+  useEffect(() => { activeMonthRef.current = settings.activeMonth }, [settings.activeMonth])
+
   useEffect(() => {
     if (!uid) return
     setDataLoaded(false)
@@ -273,29 +282,93 @@ export function AppProvider({ children }) {
   }, [notifications, fixedExpenses, settings.telegramBotToken, settings.telegramChatId, settings.currency, dataLoaded])
 
   const tgOffsetRef = useRef(0)
+  const pendingExpenseRef = useRef(null)
   useEffect(() => {
     if (!settings.telegramBotToken || !settings.telegramChatId) return
     const token = settings.telegramBotToken; const chatId = settings.telegramChatId
+
+    // Register bot commands menu
+    fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commands: [
+        { command: 'help', description: 'Όλες οι εντολές' },
+        { command: 'kategoreis', description: 'Λίστα κατηγοριών' },
+        { command: 'ypoloipo', description: 'Υπόλοιπο budget μήνα' },
+      ]}),
+    }).catch(() => {})
+
+    const tgSend = (text, extra = {}) => fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, ...extra }),
+    }).catch(() => {})
+
     const poll = async () => {
       try {
         const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=${tgOffsetRef.current}&timeout=5`)
         const data = await res.json()
         if (!data.ok) return
-        const tgSend = (text) => fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: chatId, text }),
-        }).catch(() => {})
 
         for (const update of data.result || []) {
           tgOffsetRef.current = update.update_id + 1
+          const cats = categoriesRef.current
+          const today = new Date().toISOString().slice(0, 10)
+
+          // Handle inline keyboard button taps
+          const cq = update.callback_query
+          if (cq) {
+            if (String(cq.from?.id || cq.message?.chat?.id || '') === chatId && cq.data?.startsWith('cat_')) {
+              const catId = cq.data.replace('cat_', '')
+              const cat = cats.find(c => c.id === catId)
+              const pending = pendingExpenseRef.current
+              if (pending && cat) {
+                await addExpense({ name: pending.name, amount: pending.amount, date: today, categoryId: cat.id, notes: 'Από Telegram' })
+                await tgSend(`✅ Καταχωρήθηκε!\n📌 ${pending.name}\n💰 €${pending.amount.toFixed(2)}\n📂 ${cat.icon || ''} ${cat.name}`)
+                pendingExpenseRef.current = null
+              }
+              fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ callback_query_id: cq.id }),
+              }).catch(() => {})
+            }
+            continue
+          }
+
           const text = update.message?.text?.trim() || ''
           const fromId = String(update.message?.chat?.id || '')
           if (fromId !== chatId) continue
 
-          // /κατηγορίες command
-          if (/^\/(κατηγορίες|categories)/i.test(text)) {
-            const list = categoriesRef.current.map(c => `${c.icon || '📦'} ${c.name}`).join('\n')
-            await tgSend(`📂 Κατηγορίες:\n${list}\n\nΧρήση:\nπρόσθεσε 5 καφές φαγητό`)
+          // /start
+          if (/^\/start/i.test(text)) {
+            await tgSend(`👋 Καλώς ήρθες στο Monflow Bot!\n\nΕντολές:\n/help — όλες οι εντολές\n/kategoreis — κατηγορίες\n/ypoloipo — υπόλοιπο budget\n\nΠρόσθεσε έξοδο:\nπρόσθεσε 5 καφές\nπρόσθεσε 30 βενζίνη μεταφορά`)
+            continue
+          }
+
+          // /help
+          if (/^\/help/i.test(text)) {
+            await tgSend(`📋 Εντολές Monflow Bot:\n\n/start — Καλωσόρισμα\n/kategoreis — Λίστα κατηγοριών\n/ypoloipo — Υπόλοιπο budget μήνα\n\n➕ Προσθήκη εξόδου:\nπρόσθεσε [ποσό] [περιγραφή]\nπρόσθεσε [ποσό] [περιγραφή] [κατηγορία]\n\nΠαραδείγματα:\nπρόσθεσε 2.5 καφές\nπρόσθεσε 50 βενζίνη μεταφορά\nπρόσθεσε 30 φαρμακείο υγεία`)
+            continue
+          }
+
+          // /kategoreis ή /κατηγορίες
+          if (/^\/(kategoreis|κατηγορίες|categories)/i.test(text)) {
+            const list = cats.map(c => `${c.icon || '📦'} ${c.name}`).join('\n')
+            await tgSend(`📂 Κατηγορίες:\n${list}\n\nΧρήση: πρόσθεσε 5 καφές φαγητό`)
+            continue
+          }
+
+          // /ypoloipo ή /υπολοιπο
+          if (/^\/(ypoloipo|υπολοιπο)/i.test(text)) {
+            const month = activeMonthRef.current
+            const budget = budgetsRef.current[month] || 0
+            const spent = expensesRef.current.filter(e => e.date.startsWith(month)).reduce((s, e) => s + e.amount, 0)
+            const remaining = budget - spent
+            const cur = settingsRef.current.currency
+            if (budget === 0) {
+              await tgSend(`📊 Δεν έχεις ορίσει budget για τον μήνα.`)
+            } else {
+              const pct = Math.round((spent / budget) * 100)
+              await tgSend(`📊 Budget ${month}:\n💰 Σύνολο: ${cur}${budget.toFixed(2)}\n💸 Δαπανήθηκαν: ${cur}${spent.toFixed(2)} (${pct}%)\n✅ Υπόλοιπο: ${cur}${remaining.toFixed(2)}`)
+            }
             continue
           }
 
@@ -306,8 +379,7 @@ export function AppProvider({ children }) {
             const rest = m[2].trim()
             if (isNaN(amount) || amount <= 0) continue
 
-            const cats = categoriesRef.current
-            let matchedCat = cats[0]
+            let matchedCat = null
             let expenseName = rest
 
             for (const cat of cats) {
@@ -318,8 +390,21 @@ export function AppProvider({ children }) {
               }
             }
 
-            await addExpense({ name: expenseName, amount, date: new Date().toISOString().slice(0, 10), categoryId: matchedCat?.id || 'other', notes: 'Από Telegram' })
-            await tgSend(`✅ Καταχωρήθηκε!\n📌 ${expenseName}\n💰 €${amount.toFixed(2)}\n📂 ${matchedCat?.icon || ''} ${matchedCat?.name}`)
+            if (matchedCat) {
+              await addExpense({ name: expenseName, amount, date: today, categoryId: matchedCat.id, notes: 'Από Telegram' })
+              await tgSend(`✅ Καταχωρήθηκε!\n📌 ${expenseName}\n💰 €${amount.toFixed(2)}\n📂 ${matchedCat.icon || ''} ${matchedCat.name}`)
+            } else {
+              pendingExpenseRef.current = { name: expenseName, amount }
+              const keyboard = []
+              for (let i = 0; i < cats.length; i += 2) {
+                const row = [{ text: `${cats[i].icon || '📦'} ${cats[i].name}`, callback_data: `cat_${cats[i].id}` }]
+                if (cats[i + 1]) row.push({ text: `${cats[i + 1].icon || '📦'} ${cats[i + 1].name}`, callback_data: `cat_${cats[i + 1].id}` })
+                keyboard.push(row)
+              }
+              await tgSend(`📌 ${expenseName} — €${amount.toFixed(2)}\nΕπίλεξε κατηγορία:`, {
+                reply_markup: { inline_keyboard: keyboard }
+              })
+            }
           }
         }
       } catch { /* ignore */ }
