@@ -304,7 +304,7 @@ export function AppProvider({ children }) {
 
     const poll = async () => {
       try {
-        const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=${tgOffsetRef.current}&timeout=5`)
+        const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=${tgOffsetRef.current}&timeout=20`)
         const data = await res.json()
         if (!data.ok) return
 
@@ -409,9 +409,15 @@ export function AppProvider({ children }) {
         }
       } catch { /* ignore */ }
     }
-    const iv = setInterval(poll, 5000)
-    poll()
-    return () => clearInterval(iv)
+    let active = true
+    const loop = async () => {
+      while (active) {
+        await poll()
+        if (active) await new Promise(r => setTimeout(r, 300))
+      }
+    }
+    loop()
+    return () => { active = false }
   }, [settings.telegramBotToken, settings.telegramChatId, addExpense])
 
   const resetAllData = useCallback(async () => {
