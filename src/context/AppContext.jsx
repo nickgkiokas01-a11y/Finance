@@ -281,23 +281,50 @@ export function AppProvider({ children }) {
         const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=${tgOffsetRef.current}&timeout=5`)
         const data = await res.json()
         if (!data.ok) return
+        const tgSend = (text) => fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: chatId, text }),
+        }).catch(() => {})
+
         for (const update of data.result || []) {
           tgOffsetRef.current = update.update_id + 1
-          const text = update.message?.text || ''
+          const text = update.message?.text?.trim() || ''
           const fromId = String(update.message?.chat?.id || '')
           if (fromId !== chatId) continue
-          const m = text.match(/πρόσθεσε\s+([\d.,]+)\s+ευρώ?\s+(.+)/i)
+
+          // /κατηγορίες command
+          if (/^\/(κατηγορίες|categories)/i.test(text)) {
+            const list = categoriesRef.current.map(c => `${c.icon || '📦'} ${c.name}`).join('\n')
+            await tgSend(`📂 Κατηγορίες:\n${list}\n\nΧρήση:\nπρόσθεσε 5 καφές φαγητό`)
+            continue
+          }
+
+          // πρόσθεσε [ποσό] [περιγραφή] [κατηγορία (προαιρετική)]
+          const m = text.match(/πρόσθεσε\s+([\d.,]+)\s*€?\s*(?:ευρ[ωώ])?\s+(.+)/i)
           if (m) {
             const amount = parseFloat(m[1].replace(',', '.'))
-            const name = m[2].trim()
-            if (!isNaN(amount) && amount > 0) {
-              await addExpense({ name, amount, date: new Date().toISOString().slice(0, 10), categoryId: categoriesRef.current[0]?.id || 'other', notes: 'Από Telegram' })
+            const rest = m[2].trim()
+            if (isNaN(amount) || amount <= 0) continue
+
+            const cats = categoriesRef.current
+            let matchedCat = cats[0]
+            let expenseName = rest
+
+            for (const cat of cats) {
+              if (rest.toLowerCase().endsWith(cat.name.toLowerCase())) {
+                matchedCat = cat
+                expenseName = rest.slice(0, rest.length - cat.name.length).trim() || rest
+                break
+              }
             }
+
+            await addExpense({ name: expenseName, amount, date: new Date().toISOString().slice(0, 10), categoryId: matchedCat?.id || 'other', notes: 'Από Telegram' })
+            await tgSend(`✅ Καταχωρήθηκε!\n📌 ${expenseName}\n💰 €${amount.toFixed(2)}\n📂 ${matchedCat?.icon || ''} ${matchedCat?.name}`)
           }
         }
       } catch { /* ignore */ }
     }
-    const iv = setInterval(poll, 60000)
+    const iv = setInterval(poll, 5000)
     poll()
     return () => clearInterval(iv)
   }, [settings.telegramBotToken, settings.telegramChatId, addExpense])
